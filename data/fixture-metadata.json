@@ -1,0 +1,27 @@
+{
+  "generated_at": "2026-09-30T19:04:52.974517+00:00",
+  "source_file": "fuel-prices-for-be-assessment.csv",
+  "source_sha256": "c704371f141ded9c54df6c32d488a0ba2ceb589f88c936c967daa5330e0cd241",
+  "geonames_download_url": "https://download.geonames.org/export/dump/US.zip",
+  "geonames_file": "route-planner-US.zip",
+  "geonames_sha256": "f41d71f2395b2f1a57f78481539e67a8a6ded94d47f936009b67d1e958b0fa60",
+  "census_results_sha256": "a5ef4e7d0e7447e31db748e1d1be4eda5d4f0882927a8788c873ae3751ea183a",
+  "census_confident_match_count": 0,
+  "station_count": 6603,
+  "unmatched_localities": [
+    "Brookpark, OH",
+    "Corinth, ME",
+    "Crescent, PA",
+    "De Forest, WI",
+    "Mc Alpin, FL",
+    "Mc Calla, AL",
+    "Mc Crory, AR",
+    "Mc Kees Rocks, PA",
+    "Mc Lean, IL",
+    "Oneill, NE",
+    "Pueblo Of Acoma, NM",
+    "S Coffeyville, OK",
+    "Saint Johns, FL",
+    "Willow Beach, AZ"
+  ]
+}

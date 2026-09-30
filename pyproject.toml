@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "route-fuel-planner"
+version = "0.1.0"
+description = "Find cost-effective fuel stops along a US driving route."
+requires-python = ">=3.12"
+dependencies = [
+    "Django==6.1.1",
+    "djangorestframework>=3.18,<3.19",
+    "django-redis>=6,<7",
+    "drf-spectacular>=0.28,<0.30",
+    "gunicorn>=23,<24",
+    "httpx>=0.28,<0.29",
+    "psycopg[binary]>=3.2,<3.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "django-stubs>=6.1,<7",
+    "djangorestframework-stubs>=3.18,<4",
+    "mypy>=1.18,<2",
+    "pytest>=8.4,<10",
+    "pytest-django>=4.11,<5",
+    "respx>=0.22,<0.23",
+    "ruff>=0.13,<0.16",
+]
+
+[tool.setuptools.packages.find]
+include = ["fuel_planner*", "route_optimizer*"]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "route_optimizer.settings"
+pythonpath = ["."]
+python_files = ["test_*.py"]
+testpaths = ["tests"]
+
+[tool.mypy]
+plugins = ["mypy_django_plugin.main", "mypy_drf_plugin.main"]
+python_version = "3.12"
+check_untyped_defs = true
+disallow_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+[tool.django-stubs]
+django_settings_module = "route_optimizer.settings"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["*/migrations/*.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

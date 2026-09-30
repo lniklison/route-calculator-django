@@ -1,0 +1,61 @@
+services:
+  db:
+    image: postgis/postgis:17-3.5
+    platform: linux/amd64
+    environment:
+      POSTGRES_DB: route_planner
+      POSTGRES_USER: route_planner
+      POSTGRES_PASSWORD: route_planner
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U route_planner"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7.4-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  web:
+    build:
+      context: .
+      target: development
+    environment: &app-environment
+      POSTGRES_DB: route_planner
+      POSTGRES_USER: route_planner
+      POSTGRES_PASSWORD: route_planner
+      POSTGRES_HOST: db
+      REDIS_URL: redis://redis:6379/1
+      OPENROUTESERVICE_API_KEY: ${OPENROUTESERVICE_API_KEY:-}
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      setup:
+        condition: service_completed_successfully
+    ports:
+      - "8000:8000"
+
+  setup:
+    build:
+      context: .
+      target: development
+    environment: *app-environment
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["python", "manage.py", "bootstrap"]
+    restart: "no"
+
+volumes:
+  postgres_data:
