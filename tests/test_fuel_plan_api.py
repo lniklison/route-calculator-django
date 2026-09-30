@@ -55,7 +55,11 @@ def test_creates_a_geojson_fuel_plan_for_free_form_locations() -> None:
 
     response = APIClient().post(
         "/api/v1/fuel-plans",
-        {"start": "Austin, TX", "finish": "Denver, CO"},
+        {
+            "start": "Austin, TX",
+            "finish": "Denver, CO",
+            "routing_api_key": "request-key",
+        },
         format="json",
     )
 
@@ -67,11 +71,13 @@ def test_creates_a_geojson_fuel_plan_for_free_form_locations() -> None:
         "duration_minutes": 600.0,
         "fuel_consumed_gallons": "40.000",
         "fuel_purchased_gallons": "0.000",
-        "trip_fuel_cost": "0.00",
+        "trip_fuel_cost": "0.000",
         "tank_capacity_gallons": "50",
         "fuel_efficiency_mpg": "10",
         "maximum_range_miles": "500",
     }
+    assert respx.calls[0].request.url.params["api_key"] == "request-key"
+    assert respx.calls[2].request.headers["Authorization"] == "request-key"
 
 
 @pytest.mark.django_db
@@ -91,6 +97,20 @@ def test_rejects_a_non_positive_tank_capacity() -> None:
     assert "tank_capacity_gallons" in response.json()["error"]["details"]
 
 
+def test_accepts_any_positive_tank_capacity() -> None:
+    from fuel_planner.serializers import FuelPlanRequestSerializer
+
+    serializer = FuelPlanRequestSerializer(
+        data={
+            "start": "Austin, TX",
+            "finish": "Denver, CO",
+            "tank_capacity_gallons": "500000000000.123456",
+        }
+    )
+
+    assert serializer.is_valid(), serializer.errors
+
+
 @pytest.mark.django_db
 @override_settings(OPENROUTESERVICE_API_KEY="test-key")
 @respx.mock
@@ -107,6 +127,45 @@ def test_reports_a_location_that_cannot_be_resolved() -> None:
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "location_not_found"
+
+
+@pytest.mark.django_db
+@override_settings(OPENROUTESERVICE_API_KEY="test-key")
+@respx.mock
+def test_rejects_us_locations_outside_the_contiguous_states() -> None:
+    respx.get(GEOCODE_URL).mock(
+        return_value=httpx.Response(200, json=geocode_response(-66.1, 18.4, "PR"))
+    )
+
+    response = APIClient().post(
+        "/api/v1/fuel-plans",
+        {"start": "San Juan, PR", "finish": "Miami, FL"},
+        format="json",
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "unsupported_location"
+
+
+@pytest.mark.django_db
+@override_settings(OPENROUTESERVICE_API_KEY="test-key")
+@respx.mock
+def test_reports_a_malformed_geocoder_response_as_a_provider_error() -> None:
+    respx.get(GEOCODE_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={"features": [{"properties": [], "geometry": {}}]},
+        )
+    )
+
+    response = APIClient().post(
+        "/api/v1/fuel-plans",
+        {"start": "Austin, TX", "finish": "Denver, CO"},
+        format="json",
+    )
+
+    assert response.status_code == 502
+    assert response.json()["error"]["code"] == "routing_service_unavailable"
 
 
 @pytest.mark.django_db
@@ -156,4 +215,4 @@ def test_returns_an_affordable_station_along_a_long_route() -> None:
     properties = response.json()["fuel_stops"][0]["properties"]
     assert properties["opis_id"] == 7
     assert properties["gallons_purchased"] == "10.000"
-    assert response.json()["summary"]["trip_fuel_cost"] == "30.00"
+    assert response.json()["summary"]["trip_fuel_cost"] == "30.000"

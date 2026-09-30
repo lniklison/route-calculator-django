@@ -91,15 +91,18 @@ class Command(BaseCommand):
             raise CommandError(f"Fuel-station source does not exist: {source}")
 
         source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
-        if FuelDataImport.objects.filter(source_sha256=source_hash).exists():
+        active_hash = FuelStation.objects.values_list(
+            "source_import__source_sha256", flat=True
+        ).first()
+        if active_hash == source_hash:
             self.stdout.write("Fuel-station data is already imported.")
             return
 
         stations = _read_stations(source)
         with transaction.atomic():
-            data_import = FuelDataImport.objects.create(
-                source_file=source.name,
+            data_import, _ = FuelDataImport.objects.get_or_create(
                 source_sha256=source_hash,
+                defaults={"source_file": source.name},
             )
             FuelStation.objects.all().delete()
             FuelStation.objects.bulk_create(

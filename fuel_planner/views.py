@@ -27,5 +27,6 @@ class FuelPlanView(APIView):
             tank_capacity_gallons=serializer.validated_data.get(
                 "tank_capacity_gallons"
             ),
+            routing_api_key=serializer.validated_data.get("routing_api_key"),
         )
         return Response(result)

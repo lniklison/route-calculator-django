@@ -1,3 +1,4 @@
+import math
 from decimal import Decimal
 from typing import Any
 
@@ -25,7 +26,7 @@ def stations_near_route(
 
     candidates = []
     for station in stations:
-        route_fraction = route_line.project(station.location) / route_line.length
+        route_fraction = _geodesic_route_fraction(route_line, station.location)
         candidates.append(
             CandidateStation(
                 opis_id=station.opis_id,
@@ -41,3 +42,51 @@ def stations_near_route(
             )
         )
     return candidates
+
+
+def _geodesic_route_fraction(route: LineString, point: Any) -> float:
+    projected_route = route.clone()
+    projected_point = point.clone()
+    projected_route.transform(5070)
+    projected_point.transform(5070)
+    position = projected_route.project(projected_point)
+
+    route_coordinates = list(route.coords)
+    projected_coordinates = list(projected_route.coords)
+    geodesic_lengths = [
+        _great_circle_distance(start, finish)
+        for start, finish in zip(route_coordinates, route_coordinates[1:], strict=False)
+    ]
+    total_length = sum(geodesic_lengths)
+    if total_length == 0:
+        return 0
+
+    travelled = 0.0
+    remaining_position = position
+    for index, (start, finish) in enumerate(
+        zip(projected_coordinates, projected_coordinates[1:], strict=False)
+    ):
+        segment_length = math.dist(start, finish)
+        if remaining_position >= segment_length:
+            travelled += geodesic_lengths[index]
+            remaining_position -= segment_length
+            continue
+        if segment_length > 0:
+            travelled += geodesic_lengths[index] * remaining_position / segment_length
+        break
+
+    return min(1.0, max(0.0, travelled / total_length))
+
+
+def _great_circle_distance(start: tuple[float, ...], finish: tuple[float, ...]) -> float:
+    start_longitude, start_latitude = map(math.radians, start[:2])
+    finish_longitude, finish_latitude = map(math.radians, finish[:2])
+    latitude_difference = finish_latitude - start_latitude
+    longitude_difference = finish_longitude - start_longitude
+    haversine = (
+        math.sin(latitude_difference / 2) ** 2
+        + math.cos(start_latitude)
+        * math.cos(finish_latitude)
+        * math.sin(longitude_difference / 2) ** 2
+    )
+    return 2 * math.asin(math.sqrt(haversine))

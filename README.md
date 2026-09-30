@@ -24,11 +24,12 @@ curl --request POST http://localhost:8000/api/v1/fuel-plans \
   --data '{
     "start": "Austin, TX",
     "finish": "Denver, CO",
-    "tank_capacity_gallons": 50
+    "tank_capacity_gallons": 50,
+    "routing_api_key": "optional-request-specific-key"
   }'
 ```
 
-`tank_capacity_gallons` is optional and defaults to 50. Any positive value is accepted so hypothetical vehicles can be modelled. Fuel efficiency is fixed at the assignment value of 10 MPG.
+`tank_capacity_gallons` is optional and defaults to 50. Any positive value is accepted so hypothetical vehicles can be modelled. `routing_api_key` is also optional and overrides the server's OpenRouteService key for that request. Fuel efficiency is fixed at the assignment value of 10 MPG.
 
 The response contains:
 
@@ -40,7 +41,7 @@ The response contains:
 
 ## Important assumptions
 
-- The vehicle starts with a full tank. Its previous purchase cost is unknown and excluded, so trips within the initial range cost `$0.00`.
+- The vehicle starts with a full tank. Its previous purchase cost is unknown and excluded, so trips within the initial range cost `$0.000`.
 - The route must remain in the contiguous United States. OpenRouteService is asked to avoid international borders.
 - Stations within 10 straight-line miles of the route are considered. Their detour mileage is not added to range or cost.
 - `Retail Price` is treated as USD per gallon and rounded to three decimals. Fuel grade and effective date are unknown.
@@ -83,4 +84,3 @@ docker compose run --rm web ruff check .
 ```
 
 The source CSV is included because this assessment repository is intended to remain private. See [data/README.md](data/README.md) for provenance and licensing notes. Domain language and the coordinate decision are recorded in [CONTEXT.md](CONTEXT.md) and [ADR 0001](docs/adr/0001-approximate-station-coordinates.md).
-

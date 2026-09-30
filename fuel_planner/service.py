@@ -15,6 +15,7 @@ def build_fuel_plan(
     start_query: str,
     finish_query: str,
     tank_capacity_gallons: Decimal | None,
+    routing_api_key: str | None = None,
 ) -> dict[str, Any]:
     tank_capacity = tank_capacity_gallons or Decimal(
         str(settings.TANK_CAPACITY_GALLONS)
@@ -22,7 +23,7 @@ def build_fuel_plan(
     fuel_efficiency = Decimal(str(settings.FUEL_EFFICIENCY_MPG))
     corridor_miles = Decimal(str(settings.ROUTE_CORRIDOR_MILES))
 
-    routing = OpenRouteService()
+    routing = OpenRouteService(api_key=routing_api_key)
     start = routing.geocode(start_query)
     finish = routing.geocode(finish_query)
     route = routing.route(start, finish)

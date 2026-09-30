@@ -14,7 +14,13 @@ from fuel_planner.errors import (
 
 GEOCODE_CACHE_SECONDS = 30 * 24 * 60 * 60
 ROUTE_CACHE_SECONDS = 24 * 60 * 60
-UNSUPPORTED_STATES = {"AK", "HI"}
+CONTIGUOUS_US_REGIONS = {
+    "AL", "AR", "AZ", "CA", "CO", "CT", "DC", "DE", "FL", "GA", "IA", "ID",
+    "IL", "IN", "KS", "KY", "LA", "MA", "MD", "ME", "MI", "MN", "MO", "MS",
+    "MT", "NC", "ND", "NE", "NH", "NJ", "NM", "NV", "NY", "OH", "OK", "OR",
+    "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VA", "VT", "WA", "WI", "WV",
+    "WY",
+}
 
 
 @dataclass(frozen=True)
@@ -33,9 +39,9 @@ class Route:
 
 
 class OpenRouteService:
-    def __init__(self) -> None:
+    def __init__(self, api_key: str | None = None) -> None:
         self.base_url = str(settings.OPENROUTESERVICE_BASE_URL).rstrip("/")
-        self.api_key = str(settings.OPENROUTESERVICE_API_KEY)
+        self.api_key = api_key or str(settings.OPENROUTESERVICE_API_KEY)
 
     def geocode(self, query: str) -> ResolvedLocation:
         cache_key = f"ors:geocode:{_hash(query.strip().casefold())}"
@@ -59,28 +65,39 @@ class OpenRouteService:
             )
             response.raise_for_status()
             features = response.json().get("features", [])
-        except (httpx.HTTPError, TypeError, ValueError) as error:
+            if not features:
+                raise LocationNotFound(f'No location found for "{query}".')
+
+            feature = features[0]
+            properties = feature["properties"]
+            coordinates = feature["geometry"]["coordinates"]
+            country = properties["country_a"]
+            state = str(properties["region_a"]).upper()
+            if country != "USA" or state not in CONTIGUOUS_US_REGIONS:
+                raise UnsupportedLocation()
+
+            longitude = float(coordinates[0])
+            latitude = float(coordinates[1])
+            if not (-180 <= longitude <= 180 and -90 <= latitude <= 90):
+                raise ValueError("The geocoder returned invalid coordinates.")
+            location = ResolvedLocation(
+                label=str(properties.get("label", query)),
+                longitude=longitude,
+                latitude=latitude,
+                state=state,
+            )
+        except (LocationNotFound, UnsupportedLocation):
+            raise
+        except (
+            httpx.HTTPError,
+            AttributeError,
+            IndexError,
+            KeyError,
+            TypeError,
+            ValueError,
+        ) as error:
             raise RoutingServiceUnavailable() from error
 
-        if not features:
-            raise LocationNotFound(f'No location found for "{query}".')
-
-        feature = features[0]
-        properties = feature.get("properties", {})
-        coordinates = feature.get("geometry", {}).get("coordinates", [])
-        country = properties.get("country_a")
-        state = str(properties.get("region_a", "")).upper()
-        if country != "USA" or state in UNSUPPORTED_STATES:
-            raise UnsupportedLocation()
-        if len(coordinates) < 2 or not state:
-            raise LocationNotFound(f'No supported US location found for "{query}".')
-
-        location = ResolvedLocation(
-            label=str(properties.get("label", query)),
-            longitude=float(coordinates[0]),
-            latitude=float(coordinates[1]),
-            state=state,
-        )
         _cache_set(cache_key, location.__dict__, GEOCODE_CACHE_SECONDS)
         return location
 

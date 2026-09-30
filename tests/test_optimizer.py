@@ -20,7 +20,7 @@ def test_short_trip_needs_no_fuel_stop() -> None:
     assert plan.stops == ()
     assert plan.fuel_consumed_gallons == Decimal("40.000")
     assert plan.fuel_purchased_gallons == Decimal("0.000")
-    assert plan.trip_fuel_cost == Decimal("0.00")
+    assert plan.trip_fuel_cost == Decimal("0.000")
 
 
 def test_buys_only_the_fuel_needed_after_the_starting_tank() -> None:
@@ -35,7 +35,7 @@ def test_buys_only_the_fuel_needed_after_the_starting_tank() -> None:
     assert plan.stops[0].station.opis_id == 1
     assert plan.stops[0].gallons_purchased == Decimal("10.000")
     assert plan.fuel_purchased_gallons == Decimal("10.000")
-    assert plan.trip_fuel_cost == Decimal("30.00")
+    assert plan.trip_fuel_cost == Decimal("30.000")
 
 
 def test_skips_expensive_station_and_buys_less_when_cheaper_fuel_is_ahead() -> None:
@@ -55,7 +55,23 @@ def test_skips_expensive_station_and_buys_less_when_cheaper_fuel_is_ahead() -> N
         Decimal("30"),
         Decimal("20"),
     ]
-    assert plan.trip_fuel_cost == Decimal("130.00")
+    assert plan.trip_fuel_cost == Decimal("130.000")
+
+
+def test_uses_the_cheapest_of_stations_at_the_same_route_mile() -> None:
+    plan = create_fuel_plan(
+        route_distance_miles=Decimal("1200"),
+        tank_capacity_gallons=Decimal("50"),
+        fuel_efficiency_mpg=Decimal("10"),
+        stations=[
+            station("400", "2.000", 1),
+            station("800", "1.800", 2),
+            station("800", "1.500", 3),
+        ],
+    )
+
+    assert [stop.station.opis_id for stop in plan.stops] == [1, 3]
+    assert plan.trip_fuel_cost == Decimal("120.000")
 
 
 def test_reports_the_route_gap_when_no_fuel_plan_is_possible() -> None:
@@ -81,7 +97,7 @@ def test_hypothetical_large_tank_can_cover_the_route_without_stopping() -> None:
 
     assert plan.stops == ()
     assert plan.fuel_consumed_gallons == Decimal("80.000")
-    assert plan.trip_fuel_cost == Decimal("0.00")
+    assert plan.trip_fuel_cost == Decimal("0.000")
 
 
 def station(mile: str, price: str, opis_id: int) -> CandidateStation:

@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 
 THREE_DECIMALS = Decimal("0.001")
-TWO_DECIMALS = Decimal("0.01")
 
 
 @dataclass(frozen=True)
@@ -66,19 +65,25 @@ def create_fuel_plan(
                 THREE_DECIMALS, rounding=ROUND_HALF_UP
             ),
             fuel_purchased_gallons=Decimal("0.000"),
-            trip_fuel_cost=Decimal("0.00"),
+            trip_fuel_cost=Decimal("0.000"),
         )
 
     maximum_range = tank_capacity_gallons * fuel_efficiency_mpg
     destination = _Destination(route_mile=route_distance_miles)
-    route_points: list[RoutePoint] = sorted(
+    candidate_stations = sorted(
         (
             station
             for station in stations
             if Decimal("0") < station.route_mile < route_distance_miles
         ),
-        key=lambda station: station.route_mile,
+        key=lambda station: (
+            station.route_mile,
+            station.price_per_gallon,
+            station.distance_from_route_miles,
+            station.opis_id,
+        ),
     )
+    route_points: list[RoutePoint] = list(candidate_stations)
     route_points.append(destination)
 
     current_mile = Decimal("0")
@@ -122,7 +127,7 @@ def create_fuel_plan(
                         station=current_station,
                         gallons_purchased=gallons_purchased,
                         cost=(gallons_purchased * current_price).quantize(
-                            TWO_DECIMALS, rounding=ROUND_HALF_UP
+                            THREE_DECIMALS, rounding=ROUND_HALF_UP
                         ),
                     )
                 )
@@ -150,5 +155,5 @@ def create_fuel_plan(
         fuel_purchased_gallons=purchased.quantize(
             THREE_DECIMALS, rounding=ROUND_HALF_UP
         ),
-        trip_fuel_cost=cost.quantize(TWO_DECIMALS, rounding=ROUND_HALF_UP),
+        trip_fuel_cost=cost.quantize(THREE_DECIMALS, rounding=ROUND_HALF_UP),
     )
