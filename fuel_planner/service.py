@@ -1,14 +1,34 @@
+from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from django.conf import settings
 
 from fuel_planner.errors import NoFeasiblePlan
-from fuel_planner.optimizer import NoFeasibleFuelPlan, create_fuel_plan
-from fuel_planner.routing import OpenRouteService
-from fuel_planner.stations import stations_near_route
+from fuel_planner.optimizer import (
+    CandidateStation,
+    FuelPlan,
+    FuelStop,
+    NoFeasibleFuelPlan,
+    create_fuel_plan,
+)
+from fuel_planner.routing import OpenRouteService, Route
+from fuel_planner.stations import find_stations_near_route
 
 METERS_PER_MILE = Decimal("1609.344")
+
+
+@dataclass(frozen=True)
+class _VehicleProfile:
+    tank_capacity_gallons: Decimal
+    fuel_efficiency_mpg: Decimal
+
+
+@dataclass(frozen=True)
+class _TripRoute:
+    route: Route
+    distance_miles: Decimal
+    candidate_stations: list[CandidateStation]
 
 
 def build_fuel_plan(
@@ -17,25 +37,52 @@ def build_fuel_plan(
     tank_capacity_gallons: Decimal | None,
     routing_api_key: str | None = None,
 ) -> dict[str, Any]:
+    vehicle = _generate_vehicle_profile(tank_capacity_gallons)
+    trip_route = _prepare_trip_route(start_query, finish_query, routing_api_key)
+    fuel_plan = _optimize_fuel_plan(trip_route, vehicle)
+    return _generate_fuel_plan_response(trip_route, fuel_plan, vehicle)
+
+
+def _generate_vehicle_profile(tank_capacity_gallons: Decimal | None) -> _VehicleProfile:
     tank_capacity = tank_capacity_gallons or Decimal(
         str(settings.TANK_CAPACITY_GALLONS)
     )
-    fuel_efficiency = Decimal(str(settings.FUEL_EFFICIENCY_MPG))
+    return _VehicleProfile(
+        tank_capacity_gallons=tank_capacity,
+        fuel_efficiency_mpg=Decimal(str(settings.FUEL_EFFICIENCY_MPG)),
+    )
+
+
+def _prepare_trip_route(
+    start_query: str,
+    finish_query: str,
+    routing_api_key: str | None,
+) -> _TripRoute:
     corridor_miles = Decimal(str(settings.ROUTE_CORRIDOR_MILES))
 
     routing = OpenRouteService(api_key=routing_api_key)
-    start = routing.geocode(start_query)
-    finish = routing.geocode(finish_query)
-    route = routing.route(start, finish)
+    start = routing.get_geocode(start_query)
+    finish = routing.get_geocode(finish_query)
+    route = routing.generate_route(start, finish)
     distance_miles = Decimal(str(route.distance_meters)) / METERS_PER_MILE
-    candidates = stations_near_route(route.feature, distance_miles, corridor_miles)
+    candidate_stations = find_stations_near_route(
+        route.feature,
+        distance_miles,
+        corridor_miles,
+    )
+    return _TripRoute(route, distance_miles, candidate_stations)
 
+
+def _optimize_fuel_plan(
+    trip_route: _TripRoute,
+    vehicle: _VehicleProfile,
+) -> FuelPlan:
     try:
-        plan = create_fuel_plan(
-            route_distance_miles=distance_miles,
-            tank_capacity_gallons=tank_capacity,
-            fuel_efficiency_mpg=fuel_efficiency,
-            stations=candidates,
+        return create_fuel_plan(
+            route_distance_miles=trip_route.distance_miles,
+            tank_capacity_gallons=vehicle.tank_capacity_gallons,
+            fuel_efficiency_mpg=vehicle.fuel_efficiency_mpg,
+            stations=trip_route.candidate_stations,
         )
     except NoFeasibleFuelPlan as error:
         gap = error.maximum_reachable_mile - error.route_mile
@@ -44,30 +91,40 @@ def build_fuel_plan(
             f"the vehicle can travel {gap:.1f} more miles."
         ) from error
 
+
+def _generate_fuel_plan_response(
+    trip_route: _TripRoute,
+    fuel_plan: FuelPlan,
+    vehicle: _VehicleProfile,
+) -> dict[str, Any]:
     return {
-        "route": route.feature,
-        "fuel_stops": [_stop_feature(stop) for stop in plan.stops],
-        "summary": {
-            "distance_miles": float(distance_miles.quantize(Decimal("0.1"))),
-            "duration_minutes": float(
-                (Decimal(str(route.duration_seconds)) / Decimal("60")).quantize(
-                    Decimal("0.1")
-                )
-            ),
-            "fuel_consumed_gallons": str(plan.fuel_consumed_gallons),
-            "fuel_purchased_gallons": str(plan.fuel_purchased_gallons),
-            "trip_fuel_cost": str(plan.trip_fuel_cost),
-            "tank_capacity_gallons": _compact_decimal(tank_capacity),
-            "fuel_efficiency_mpg": _compact_decimal(fuel_efficiency),
-            "maximum_range_miles": _compact_decimal(
-                tank_capacity * fuel_efficiency
-            ),
-        },
-        "warnings": _warnings(plan.stops),
+        "route": trip_route.route.feature,
+        "fuel_stops": [_stop_feature(stop) for stop in fuel_plan.stops],
+        "summary": _trip_summary(trip_route, fuel_plan, vehicle),
+        "warnings": _warnings(fuel_plan.stops),
     }
 
 
-def _stop_feature(stop: Any) -> dict[str, Any]:
+def _trip_summary(
+    trip_route: _TripRoute,
+    fuel_plan: FuelPlan,
+    vehicle: _VehicleProfile,
+) -> dict[str, Any]:
+    duration_minutes = Decimal(str(trip_route.route.duration_seconds)) / Decimal("60")
+    maximum_range = vehicle.tank_capacity_gallons * vehicle.fuel_efficiency_mpg
+    return {
+        "distance_miles": float(trip_route.distance_miles.quantize(Decimal("0.1"))),
+        "duration_minutes": float(duration_minutes.quantize(Decimal("0.1"))),
+        "fuel_consumed_gallons": str(fuel_plan.fuel_consumed_gallons),
+        "fuel_purchased_gallons": str(fuel_plan.fuel_purchased_gallons),
+        "trip_fuel_cost": str(fuel_plan.trip_fuel_cost),
+        "tank_capacity_gallons": _compact_decimal(vehicle.tank_capacity_gallons),
+        "fuel_efficiency_mpg": _compact_decimal(vehicle.fuel_efficiency_mpg),
+        "maximum_range_miles": _compact_decimal(maximum_range),
+    }
+
+
+def _stop_feature(stop: FuelStop) -> dict[str, Any]:
     station = stop.station
     return {
         "type": "Feature",
@@ -94,7 +151,7 @@ def _stop_feature(stop: Any) -> dict[str, Any]:
     }
 
 
-def _warnings(stops: tuple[Any, ...]) -> list[str]:
+def _warnings(stops: tuple[FuelStop, ...]) -> list[str]:
     warnings = [
         "The vehicle starts with a full tank; the cost of that fuel is excluded.",
         "Fuel-station detour mileage is not included in range or cost calculations.",

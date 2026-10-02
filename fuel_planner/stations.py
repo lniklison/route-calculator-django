@@ -10,7 +10,7 @@ from fuel_planner.models import FuelStation
 from fuel_planner.optimizer import CandidateStation
 
 
-def stations_near_route(
+def find_stations_near_route(
     route_feature: dict[str, Any],
     route_distance_miles: Decimal,
     corridor_miles: Decimal,

@@ -43,105 +43,125 @@ class OpenRouteService:
         self.base_url = str(settings.OPENROUTESERVICE_BASE_URL).rstrip("/")
         self.api_key = api_key or str(settings.OPENROUTESERVICE_API_KEY)
 
-    def geocode(self, query: str) -> ResolvedLocation:
+    def get_geocode(self, query: str) -> ResolvedLocation:
         cache_key = f"ors:geocode:{_hash(query.strip().casefold())}"
-        cached = _cache_get(cache_key)
+        cached = _get_from_cache(cache_key)
         if isinstance(cached, dict):
             return ResolvedLocation(**cached)
 
-        if not self.api_key:
-            raise RoutingServiceUnavailable("OPENROUTESERVICE_API_KEY is not configured.")
+        self._require_api_key()
 
         try:
-            response = httpx.get(
-                f"{self.base_url}/geocode/search",
-                params={
-                    "api_key": self.api_key,
-                    "text": query,
-                    "boundary.country": "US",
-                    "size": 1,
-                },
-                timeout=10,
-            )
-            response.raise_for_status()
-            features = response.json().get("features", [])
-            if not features:
-                raise LocationNotFound(f'No location found for "{query}".')
-
-            feature = features[0]
-            properties = feature["properties"]
-            coordinates = feature["geometry"]["coordinates"]
-            country = properties["country_a"]
-            state = str(properties["region_a"]).upper()
-            if country != "USA" or state not in CONTIGUOUS_US_REGIONS:
-                raise UnsupportedLocation()
-
-            longitude = float(coordinates[0])
-            latitude = float(coordinates[1])
-            if not (-180 <= longitude <= 180 and -90 <= latitude <= 90):
-                raise ValueError("The geocoder returned invalid coordinates.")
-            location = ResolvedLocation(
-                label=str(properties.get("label", query)),
-                longitude=longitude,
-                latitude=latitude,
-                state=state,
-            )
+            feature = self._request_geocode_feature(query)
+            location = _location_from_geocode(feature, query)
         except (LocationNotFound, UnsupportedLocation):
             raise
-        except (
-            httpx.HTTPError,
-            AttributeError,
-            IndexError,
-            KeyError,
-            TypeError,
-            ValueError,
-        ) as error:
+        except _PROVIDER_ERRORS as error:
             raise RoutingServiceUnavailable() from error
 
-        _cache_set(cache_key, location.__dict__, GEOCODE_CACHE_SECONDS)
+        _set_cache(cache_key, location.__dict__, GEOCODE_CACHE_SECONDS)
         return location
 
-    def route(self, start: ResolvedLocation, finish: ResolvedLocation) -> Route:
+    def generate_route(self, start: ResolvedLocation, finish: ResolvedLocation) -> Route:
         coordinate_key = (
             f"{start.longitude:.6f},{start.latitude:.6f}:"
             f"{finish.longitude:.6f},{finish.latitude:.6f}"
         )
         cache_key = f"ors:route:{_hash(coordinate_key)}"
-        cached = _cache_get(cache_key)
+        cached = _get_from_cache(cache_key)
         if isinstance(cached, dict):
-            return _route_from_feature(cached)
+            return _route_from_raw_geojson(cached)
 
-        if not self.api_key:
-            raise RoutingServiceUnavailable("OPENROUTESERVICE_API_KEY is not configured.")
+        self._require_api_key()
 
         try:
-            response = httpx.post(
-                f"{self.base_url}/v2/directions/driving-car/geojson",
-                headers={"Authorization": self.api_key},
-                json={
-                    "coordinates": [
-                        [start.longitude, start.latitude],
-                        [finish.longitude, finish.latitude],
-                    ],
-                    "instructions": False,
-                    "options": {"avoid_borders": "all"},
-                },
-                timeout=20,
-            )
-            response.raise_for_status()
-            features = response.json().get("features", [])
-            if not features:
-                raise ValueError("The routing response contained no route.")
-            feature = features[0]
-            route = _route_from_feature(feature)
-        except (httpx.HTTPError, KeyError, TypeError, ValueError) as error:
+            raw_route = self._get_geojson_route(start, finish)
+            route = _route_from_raw_geojson(raw_route)
+        except _PROVIDER_ERRORS as error:
             raise RoutingServiceUnavailable() from error
 
-        _cache_set(cache_key, feature, ROUTE_CACHE_SECONDS)
+        _set_cache(cache_key, raw_route, ROUTE_CACHE_SECONDS)
         return route
 
+    def _require_api_key(self) -> None:
+        if not self.api_key:
+            raise RoutingServiceUnavailable(
+                "OPENROUTESERVICE_API_KEY is not configured."
+            )
 
-def _route_from_feature(feature: dict[str, Any]) -> Route:
+    def _request_geocode_feature(self, query: str) -> dict[str, Any]:
+        response = httpx.get(
+            f"{self.base_url}/geocode/search",
+            params={
+                "api_key": self.api_key,
+                "text": query,
+                "boundary.country": "US",
+                "size": 1,
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        features = response.json().get("features", [])
+        if not features:
+            raise LocationNotFound(f'No location found for "{query}".')
+        return features[0]
+
+    def _get_geojson_route(
+        self,
+        start: ResolvedLocation,
+        finish: ResolvedLocation,
+    ) -> dict[str, Any]:
+        response = httpx.post(
+            f"{self.base_url}/v2/directions/driving-car/geojson",
+            headers={"Authorization": self.api_key},
+            json={
+                "coordinates": [
+                    [start.longitude, start.latitude],
+                    [finish.longitude, finish.latitude],
+                ],
+                "instructions": False,
+                "options": {"avoid_borders": "all"},
+            },
+            timeout=20,
+        )
+        response.raise_for_status()
+        features = response.json().get("features", [])
+        if not features:
+            raise ValueError("The routing response contained no route.")
+        return features[0]
+
+
+_PROVIDER_ERRORS = (
+    httpx.HTTPError,
+    AttributeError,
+    IndexError,
+    KeyError,
+    TypeError,
+    ValueError,
+)
+
+
+def _location_from_geocode(feature: dict[str, Any], query: str) -> ResolvedLocation:
+    properties = feature["properties"]
+    coordinates = feature["geometry"]["coordinates"]
+    country = properties["country_a"]
+    state = str(properties["region_a"]).upper()
+    if country != "USA" or state not in CONTIGUOUS_US_REGIONS:
+        raise UnsupportedLocation()
+
+    longitude = float(coordinates[0])
+    latitude = float(coordinates[1])
+    if not (-180 <= longitude <= 180 and -90 <= latitude <= 90):
+        raise ValueError("The geocoder returned invalid coordinates.")
+    return ResolvedLocation(
+        label=str(properties.get("label", query)),
+        longitude=longitude,
+        latitude=latitude,
+        state=state,
+    )
+
+
+def _route_from_raw_geojson(feature: dict[str, Any]) -> Route:
     summary = feature["properties"]["summary"]
     return Route(
         feature=feature,
@@ -154,14 +174,14 @@ def _hash(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-def _cache_get(key: str) -> Any:
+def _get_from_cache(key: str) -> Any:
     try:
         return cache.get(key)
     except Exception:
         return None
 
 
-def _cache_set(key: str, value: Any, timeout: int) -> None:
+def _set_cache(key: str, value: Any, timeout: int) -> None:
     try:
         cache.set(key, value, timeout)
     except Exception:
